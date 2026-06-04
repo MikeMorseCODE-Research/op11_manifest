@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Droidian/Halium manifest for OnePlus 11 (salami / SM8550)
+
+  Usage:
+    repo init -u https://github.com/MikeMorseCODE/op11_manifest \
+              -b droidian -m salami-droidian.xml
+    repo sync -c -j$(nproc) --no-tags --no-clone-bundle
+
+  This manifest is meant to be used on top of a Halium base tree.
+  Recommended base:
+    repo init -u https://github.com/Halium/android -b halium-12.0 --depth=1
+  Then copy salami-droidian.xml to .repo/local_manifests/ and repo sync.
+
+  Alternatively use the standalone local_manifests/salami-droidian-override.xml.
+-->
+<manifest>
+
+  <!-- ================================================================
+       Remotes
+       ================================================================ -->
+  <remote name="mikemorse"
+      fetch="https://github.com/MikeMorseCODE/"
+      sync-c="true"
+      sync-tags="false" />
+
+  <remote name="TheMuppets"
+      fetch="https://gitlab.com/the-muppets/"
+      sync-c="true"
+      sync-tags="false" />
+
+  <remote name="LineageOS"
+      fetch="https://github.com/LineageOS/"
+      sync-c="true"
+      sync-tags="false" />
+
+  <!-- ================================================================
+       Kernel
+       ================================================================ -->
+  <project name="kernel_oneplus_sm8550"
+      path="kernel/oneplus/sm8550"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="android_kernel_oneplus_sm8550-devicetrees"
+      path="kernel/oneplus/sm8550-devicetrees"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="android_kernel_oneplus_sm8550-modules"
+      path="kernel/oneplus/sm8550-modules"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <!-- OP11 b-variant kernel (secondary board support) -->
+  <project name="android_kernel_oneplus_sm8550_b_op11"
+      path="kernel/oneplus/sm8550-b-op11"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <!-- KernelSU support module -->
+  <project name="kernelsu_opsm8550"
+      path="kernel/oneplus/kernelsu"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <!-- ================================================================
+       Device
+       ================================================================ -->
+  <project name="android_device_oneplus_sm8550-common"
+      path="device/oneplus/sm8550-common"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="android_device_oneplus_salami"
+      path="device/oneplus/salami"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="android_device_oneplus_op594dl1"
+      path="device/oneplus/op594dl1"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <!-- ================================================================
+       Hardware
+       ================================================================ -->
+  <project name="android_hardware_oplus"
+      path="hardware/oplus"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <!-- ================================================================
+       Vendor blobs — binary, unchanged for Droidian; use lineage-21
+       ================================================================ -->
+  <project name="proprietary_vendor_oneplus_salami"
+      path="vendor/oneplus/salami"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="proprietary_vendor_oneplus_sm8550-common"
+      path="vendor/oneplus/sm8550-common"
+      remote="mikemorse"
+      revision="droidian" />
+
+</manifest>

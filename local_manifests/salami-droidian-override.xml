@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LOCAL MANIFEST OVERRIDE — OnePlus 11 (salami) Droidian/Halium
+
+  Drop this file into .repo/local_manifests/ of an existing
+  Halium-12.0 or LineageOS-21 tree, then run:
+
+    repo sync -c -j$(nproc) --no-tags --no-clone-bundle
+
+  The <remove-project> entries remove upstream LineageOS/TheMuppets
+  entries so our forks can replace them without conflicts.
+-->
+<manifest>
+
+  <remote name="mikemorse"
+      fetch="https://github.com/MikeMorseCODE/"
+      sync-c="true"
+      sync-tags="false" />
+
+  <!-- Remove upstream entries that we are replacing -->
+  <remove-project name="LineageOS/android_kernel_oneplus_sm8550" />
+  <remove-project name="LineageOS/android_kernel_oneplus_sm8550-devicetrees" />
+  <remove-project name="LineageOS/android_kernel_oneplus_sm8550-modules" />
+  <remove-project name="LineageOS/android_device_oneplus_sm8550-common" />
+  <remove-project name="LineageOS/android_device_oneplus_salami" />
+  <remove-project name="LineageOS/android_hardware_oplus" />
+  <remove-project name="TheMuppets/proprietary_vendor_oneplus_salami" />
+  <remove-project name="TheMuppets/proprietary_vendor_oneplus_sm8550-common" />
+
+  <!-- Our forks at the droidian branch -->
+  <project name="kernel_oneplus_sm8550"
+      path="kernel/oneplus/sm8550"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="android_kernel_oneplus_sm8550-devicetrees"
+      path="kernel/oneplus/sm8550-devicetrees"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="android_kernel_oneplus_sm8550-modules"
+      path="kernel/oneplus/sm8550-modules"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="android_device_oneplus_sm8550-common"
+      path="device/oneplus/sm8550-common"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="android_device_oneplus_salami"
+      path="device/oneplus/salami"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="android_hardware_oplus"
+      path="hardware/oplus"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="proprietary_vendor_oneplus_salami"
+      path="vendor/oneplus/salami"
+      remote="mikemorse"
+      revision="droidian" />
+
+  <project name="proprietary_vendor_oneplus_sm8550-common"
+      path="vendor/oneplus/sm8550-common"
+      remote="mikemorse"
+      revision="droidian" />
+
+</manifest>
