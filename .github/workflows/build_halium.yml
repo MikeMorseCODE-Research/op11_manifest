@@ -63,12 +63,13 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache curl flex g++-multilib \
-            gcc-multilib git gnupg gperf imagemagick \
-            lib32ncurses-dev lib32readline-dev lib32z1-dev \
+            gcc-multilib git git-lfs gnupg gperf imagemagick \
+            lib32ncurses-dev lib32readline-dev lib32z1-dev libelf-dev \
             liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
             libssl-dev libwxgtk3.2-dev libxml2 libxml2-utils \
             lzop pngcrush python3 python3-pip python3-setuptools \
             rsync schedtool squashfs-tools unzip xsltproc zip zlib1g-dev
+          
           if ! command -v repo &>/dev/null; then
             mkdir -p ~/.local/bin
             curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo \
@@ -82,6 +83,7 @@ jobs:
           git config --global user.email "build-bot@halium-salami"
           git config --global user.name "Halium Build Bot"
           git config --global color.ui false
+          git config --global init.defaultBranch main
 
       - name: Prepare source tree
         run: |
@@ -135,15 +137,19 @@ jobs:
 
       - name: Collect flashable images
         if: success()
+        working-directory: ${{ env.SRC_DIR }}
         run: |
-          OUT="$SRC_DIR/out/target/product/salami"
-          DEST="$GITHUB_WORKSPACE/out-images"
+          OUT="${{ env.SRC_DIR }}/out/target/product/salami"
+          DEST="${{ github.workspace }}/out-images"
           mkdir -p "$DEST"
+          
           for img in boot.img vendor_boot.img dtbo.img vbmeta.img \
                      system.img vendor.img vendor_dlkm.img \
                      odm.img system_ext.img product.img; do
             [ -f "$OUT/$img" ] && cp "$OUT/$img" "$DEST/" && echo "Collected $img"
           done
+          
+          # Fix target execution path for flash-all script
           cp device/oneplus/salami/halium/flash-all.sh "$DEST/" 2>/dev/null || true
           ls -lh "$DEST"/
 
