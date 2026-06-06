@@ -1,6 +1,6 @@
 name: Build halium_salami
 
-on:
+runs-on: self-hosted
   workflow_dispatch:
     inputs:
       build_type:
