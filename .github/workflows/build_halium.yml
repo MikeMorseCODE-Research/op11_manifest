@@ -1,0 +1,168 @@
+name: Build halium_salami
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type (userdebug or eng)'
+        required: false
+        default: 'userdebug'
+        type: choice
+        options:
+          - userdebug
+          - eng
+      sync_flags:
+        description: 'Extra repo sync flags (e.g. --force-sync)'
+        required: false
+        default: ''
+  push:
+    branches:
+      - droidian
+    paths:
+      - 'salami-droidian.xml'
+      - 'local_manifests/**'
+
+concurrency:
+  group: build-halium-salami-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build halium_salami-${{ github.event.inputs.build_type || 'userdebug' }}
+    runs-on: [self-hosted, linux, android-build]
+    timeout-minutes: 480
+
+    env:
+      BUILD_TYPE: ${{ github.event.inputs.build_type || 'userdebug' }}
+      CCACHE_DIR: ${{ github.workspace }}/../ccache
+      CCACHE_SIZE: 50G
+      CCACHE_COMPRESS: 1
+      CCACHE_COMPRESSLEVEL: 5
+      USE_CCACHE: 1
+
+    steps:
+      - name: Check host resources
+        run: |
+          echo "=== Disk ==="
+          df -h
+          echo "=== RAM ==="
+          free -h
+          echo "=== CPUs ==="
+          nproc
+          echo "=== OS ==="
+          lsb_release -a || cat /etc/os-release
+
+          AVAIL=$(df --output=avail -BG "$GITHUB_WORKSPACE/.." | tail -1 | tr -d 'G')
+          if [ "$AVAIL" -lt 250 ]; then
+            echo "ERROR: Only ${AVAIL}G free — need at least 250G"
+            exit 1
+          fi
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex g++-multilib \
+            gcc-multilib git gnupg gperf imagemagick \
+            lib32ncurses-dev lib32readline-dev lib32z1-dev \
+            liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
+            libssl-dev libwxgtk3.2-dev libxml2 libxml2-utils \
+            lzop pngcrush python3 python3-pip python3-setuptools \
+            rsync schedtool squashfs-tools unzip xsltproc zip zlib1g-dev
+          if ! command -v repo &>/dev/null; then
+            mkdir -p ~/.local/bin
+            curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo \
+              -o ~/.local/bin/repo
+            chmod +x ~/.local/bin/repo
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Configure git identity
+        run: |
+          git config --global user.email "build-bot@halium-salami"
+          git config --global user.name "Halium Build Bot"
+          git config --global color.ui false
+
+      - name: Prepare source tree
+        run: |
+          SRC="$GITHUB_WORKSPACE/../halium-src"
+          mkdir -p "$SRC"
+          echo "SRC_DIR=$SRC" >> "$GITHUB_ENV"
+
+      - name: repo init
+        working-directory: ${{ env.SRC_DIR }}
+        run: |
+          repo init \
+            -u https://github.com/Halium/android \
+            -b halium-12.0 \
+            --depth=1 \
+            --no-repo-verify
+
+      - name: Inject local manifest
+        working-directory: ${{ env.SRC_DIR }}
+        run: |
+          mkdir -p .repo/local_manifests
+          curl -fsSL \
+            "https://raw.githubusercontent.com/MikeMorseCODE/op11_manifest/droidian/local_manifests/salami-droidian-override.xml" \
+            -o .repo/local_manifests/salami-droidian-override.xml
+
+      - name: repo sync
+        working-directory: ${{ env.SRC_DIR }}
+        run: |
+          EXTRA="${{ github.event.inputs.sync_flags }}"
+          repo sync \
+            -c \
+            -j$(nproc) \
+            --no-tags \
+            --no-clone-bundle \
+            --optimized-fetch \
+            --prune \
+            $EXTRA
+
+      - name: Set up ccache
+        run: |
+          mkdir -p "$CCACHE_DIR"
+          ccache -M "$CCACHE_SIZE"
+          ccache -z
+
+      - name: Build halium_salami-${{ env.BUILD_TYPE }}
+        working-directory: ${{ env.SRC_DIR }}
+        run: |
+          set -o pipefail
+          source build/envsetup.sh
+          lunch halium_salami-${BUILD_TYPE}
+          mka bacon -j$(nproc) 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Collect flashable images
+        if: success()
+        run: |
+          OUT="$SRC_DIR/out/target/product/salami"
+          DEST="$GITHUB_WORKSPACE/out-images"
+          mkdir -p "$DEST"
+          for img in boot.img vendor_boot.img dtbo.img vbmeta.img \
+                     system.img vendor.img vendor_dlkm.img \
+                     odm.img system_ext.img product.img; do
+            [ -f "$OUT/$img" ] && cp "$OUT/$img" "$DEST/" && echo "Collected $img"
+          done
+          cp device/oneplus/salami/halium/flash-all.sh "$DEST/" 2>/dev/null || true
+          ls -lh "$DEST"/
+
+      - name: Upload flashable images
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: halium_salami-${{ env.BUILD_TYPE }}-${{ github.run_number }}
+          path: out-images/
+          retention-days: 14
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: build.log
+          retention-days: 7
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
