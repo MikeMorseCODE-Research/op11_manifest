@@ -108,9 +108,21 @@ jobs:
         working-directory: ${{ env.SRC_DIR }}
         run: |
           mkdir -p .repo/local_manifests
+          MANIFEST_PATH=".repo/local_manifests/salami-droidian-override.xml"
+          
           curl -fsSL \
             "https://raw.githubusercontent.com/MikeMorseCODE/op11_manifest/droidian/local_manifests/salami-droidian-override.xml" \
-            -o .repo/local_manifests/salami-droidian-override.xml
+            -o "$MANIFEST_PATH"
+          
+          # Fix common XML invalid tokens (like unescaped '&' characters) dynamically
+          if [ -f "$MANIFEST_PATH" ]; then
+            echo "=== Sanitizing local manifest strings ==="
+            sed -i 's/&\([^a-zA-Z0-9#]\)/\&amp;\1/g' "$MANIFEST_PATH"
+            sed -i 's/&\s/:\&amp; /g' "$MANIFEST_PATH"
+            
+            echo "=== Validating download structure (Top 15 lines) ==="
+            cat -n "$MANIFEST_PATH" | head -n 15
+          fi
 
       - name: repo sync
         working-directory: ${{ env.SRC_DIR }}
