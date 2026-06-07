@@ -62,11 +62,14 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
+          # Fixed outdated packages for Ubuntu 24.04 compatibility:
+          # liblz4-tool -> lz4
+          # libncurses5 / libncurses5-dev -> libncurses-dev
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache curl flex g++-multilib \
             gcc-multilib git git-lfs gnupg gperf imagemagick \
             lib32ncurses-dev lib32readline-dev lib32z1-dev libelf-dev \
-            liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
+            lz4 libncurses-dev libsdl1.2-dev \
             libssl-dev libwxgtk3.2-dev libxml2 libxml2-utils \
             lzop pngcrush python3 python3-pip python3-setuptools \
             rsync schedtool squashfs-tools unzip xsltproc zip zlib1g-dev
@@ -119,4 +122,57 @@ jobs:
             --no-tags \
             --no-clone-bundle \
             --optimized-fetch \
-            --prune
+            --prune \
+            $EXTRA
+
+      - name: Set up ccache
+        run: |
+          mkdir -p "$CCACHE_DIR"
+          # Using absolute path to guarantee execution and prevent Exit Code 127
+          /usr/bin/ccache -M "$CCACHE_SIZE"
+          /usr/bin/ccache -z
+
+      - name: Build halium_salami-${{ env.BUILD_TYPE }}
+        working-directory: ${{ env.SRC_DIR }}
+        run: |
+          set -o pipefail
+          source build/envsetup.sh
+          lunch halium_salami-${BUILD_TYPE}
+          mka bacon -j$(nproc) 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Collect flashable images
+        if: success()
+        working-directory: ${{ env.SRC_DIR }}
+        run: |
+          OUT="${{ env.SRC_DIR }}/out/target/product/salami"
+          DEST="${{ github.workspace }}/out-images"
+          mkdir -p "$DEST"
+          
+          for img in boot.img vendor_boot.img dtbo.img vbmeta.img \
+                     system.img vendor.img vendor_dlkm.img \
+                     odm.img system_ext.img product.img; do
+            [ -f "$OUT/$img" ] && cp "$OUT/$img" "$DEST/" && echo "Collected $img"
+          done
+          
+          cp device/oneplus/salami/halium/flash-all.sh "$DEST/" 2>/dev/null || true
+          ls -lh "$DEST"/
+
+      - name: Upload flashable images
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: halium_salami-${{ env.BUILD_TYPE }}-${{ github.run_number }}
+          path: out-images/
+          retention-days: 14
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: build.log
+          retention-days: 7
+
+      - name: ccache stats
+        if: always()
+        run: /usr/bin/ccache -s
