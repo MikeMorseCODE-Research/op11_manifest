@@ -29,7 +29,7 @@ concurrency:
 jobs:
   build:
     name: Build halium_salami-${{ github.event.inputs.build_type || 'userdebug' }}
-    runs-on: self-hosted
+    runs-on: github
     timeout-minutes: 480
 
     env:
