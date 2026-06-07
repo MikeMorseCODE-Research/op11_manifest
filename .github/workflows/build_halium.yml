@@ -52,9 +52,10 @@ jobs:
           echo "=== OS ==="
           lsb_release -a || cat /etc/os-release
 
+          # Lowered to 225G to accommodate 238G actual binary usable space
           AVAIL=$(df --output=avail -BG "$GITHUB_WORKSPACE/.." | tail -1 | tr -d 'G')
-          if [ "$AVAIL" -lt 250 ]; then
-            echo "ERROR: Only ${AVAIL}G free — need at least 250G"
+          if [ "$AVAIL" -lt 225 ]; then
+            echo "ERROR: Only ${AVAIL}G free — need at least 225G"
             exit 1
           fi
 
@@ -118,57 +119,4 @@ jobs:
             --no-tags \
             --no-clone-bundle \
             --optimized-fetch \
-            --prune \
-            $EXTRA
-
-      - name: Set up ccache
-        run: |
-          mkdir -p "$CCACHE_DIR"
-          ccache -M "$CCACHE_SIZE"
-          ccache -z
-
-      - name: Build halium_salami-${{ env.BUILD_TYPE }}
-        working-directory: ${{ env.SRC_DIR }}
-        run: |
-          set -o pipefail
-          source build/envsetup.sh
-          lunch halium_salami-${BUILD_TYPE}
-          mka bacon -j$(nproc) 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
-
-      - name: Collect flashable images
-        if: success()
-        working-directory: ${{ env.SRC_DIR }}
-        run: |
-          OUT="${{ env.SRC_DIR }}/out/target/product/salami"
-          DEST="${{ github.workspace }}/out-images"
-          mkdir -p "$DEST"
-          
-          for img in boot.img vendor_boot.img dtbo.img vbmeta.img \
-                     system.img vendor.img vendor_dlkm.img \
-                     odm.img system_ext.img product.img; do
-            [ -f "$OUT/$img" ] && cp "$OUT/$img" "$DEST/" && echo "Collected $img"
-          done
-          
-          # Fix target execution path for flash-all script
-          cp device/oneplus/salami/halium/flash-all.sh "$DEST/" 2>/dev/null || true
-          ls -lh "$DEST"/
-
-      - name: Upload flashable images
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: halium_salami-${{ env.BUILD_TYPE }}-${{ github.run_number }}
-          path: out-images/
-          retention-days: 14
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log-${{ github.run_number }}
-          path: build.log
-          retention-days: 7
-
-      - name: ccache stats
-        if: always()
-        run: ccache -s
+            --prune
