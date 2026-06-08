@@ -52,21 +52,31 @@ jobs:
           docker system prune -af 2>/dev/null || true
           echo "After:"; df -h /
 
-      - name: Install build dependencies
+      - name: Install build dependencies + Clang 14
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache cpio curl flex git \
             kmod libelf-dev libssl-dev python3 rsync schedtool \
-            unzip zip
+            unzip zip \
+            clang-14 lld-14 llvm-14 clang-format-14
 
       - name: Configure git
         run: |
           git config --global user.email "build-bot@halium-salami"
           git config --global user.name "Halium Build Bot"
 
-      - name: Create workspace
-        run: mkdir -p "$ROOT_DIR"
+      - name: Wire Clang 14 into prebuilts path
+        run: |
+          PREBUILT_BIN="$ROOT_DIR/prebuilts/clang/host/linux-x86/clang-${CLANG_VERSION}/bin"
+          mkdir -p "$PREBUILT_BIN"
+          for f in /usr/lib/llvm-14/bin/*; do
+            ln -sf "$f" "$PREBUILT_BIN/$(basename "$f")"
+          done
+          echo "=== sanity check ==="
+          for t in clang clang++ ld.lld llvm-ar llvm-nm llvm-objcopy llvm-strip; do
+            echo -n "$t: "; "$PREBUILT_BIN/$t" --version 2>&1 | head -1
+          done
 
       - name: Clone kernel source
         run: |
@@ -93,28 +103,6 @@ jobs:
             "$ROOT_DIR/kernel/build"
           ln -s "$ROOT_DIR/kernel/build" "$ROOT_DIR/build"
 
-      - name: Cache Clang ${{ env.CLANG_VERSION }}
-        id: clang-cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.ROOT_DIR }}/prebuilts/clang/host/linux-x86/clang-${{ env.CLANG_VERSION }}
-          key: clang-${{ env.CLANG_VERSION }}-v1
-
-      - name: Download Clang ${{ env.CLANG_VERSION }}
-        if: steps.clang-cache.outputs.cache-hit != 'true'
-        run: |
-          DEST="$ROOT_DIR/prebuilts/clang/host/linux-x86"
-          mkdir -p "$DEST"
-          cd "$DEST"
-          git init
-          git remote add origin \
-            https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
-          git sparse-checkout init --cone
-          git sparse-checkout set "clang-${CLANG_VERSION}"
-          git pull --depth=1 origin master
-          echo "Clang bin contents:"
-          ls "clang-${CLANG_VERSION}/bin/" | head -20
-
       - name: Cache ccache
         uses: actions/cache@v4
         with:
@@ -137,6 +125,7 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
           export LTO=thin
+          export HERMETIC_TOOLCHAIN=0
           VARIANT="$VARIANT" \
           BUILD_CONFIG=msm-kernel/build.config.msm.kalama \
           EXT_MODULES="\
