@@ -16,7 +16,6 @@ on:
       - droidian
     paths:
       - 'local_manifests/**'
-      - 'salami-droidian.xml'
 
 concurrency:
   group: kernel-salami-${{ github.ref }}
@@ -52,21 +51,25 @@ jobs:
           docker system prune -af 2>/dev/null || true
           echo "After:"; df -h /
 
-      - name: Install build dependencies
+      - name: Install build dependencies + Clang 14
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache cpio curl flex git \
-            kmod libelf-dev libssl-dev lld llvm python3 rsync \
-            schedtool unzip zip
+            kmod libelf-dev libssl-dev python3 rsync schedtool \
+            unzip zip \
+            clang-14 lld-14 llvm-14 clang-format-14
 
       - name: Configure git
         run: |
           git config --global user.email "build-bot@halium-salami"
           git config --global user.name "Halium Build Bot"
 
-      - name: Create workspace
-        run: mkdir -p "$ROOT_DIR"
+      - name: Create workspace layout
+        run: |
+          mkdir -p "$ROOT_DIR/prebuilts/clang/host/linux-x86"
+          ln -s /usr/lib/llvm-14 \
+            "$ROOT_DIR/prebuilts/clang/host/linux-x86/clang-r450784e"
 
       - name: Clone kernel source
         run: |
@@ -93,32 +96,6 @@ jobs:
             "$ROOT_DIR/kernel/build"
           ln -s "$ROOT_DIR/kernel/build" "$ROOT_DIR/build"
 
-      - name: Resolve Clang version
-        run: |
-          CLANG_VER=$(grep -oP '(?<=CLANG_VERSION=)\S+' \
-            "$ROOT_DIR/msm-kernel/build.config.msm.common" 2>/dev/null \
-            || grep -oP '(?<=CLANG_VERSION=)\S+' \
-               "$ROOT_DIR/msm-kernel/build.config.common" 2>/dev/null \
-            || echo "clang-r416183b")
-          echo "CLANG_VER=$CLANG_VER" >> "$GITHUB_ENV"
-          echo "Using Clang: $CLANG_VER"
-
-      - name: Cache Clang toolchain
-        id: clang-cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.ROOT_DIR }}/prebuilts/clang/host/linux-x86/${{ env.CLANG_VER }}
-          key: clang-${{ env.CLANG_VER }}
-
-      - name: Download Clang toolchain
-        if: steps.clang-cache.outputs.cache-hit != 'true'
-        run: |
-          DEST="$ROOT_DIR/prebuilts/clang/host/linux-x86/$CLANG_VER"
-          mkdir -p "$DEST"
-          curl -fsSL \
-            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/${CLANG_VER}.tar.gz" \
-            | tar -xz -C "$DEST"
-
       - name: Cache ccache
         uses: actions/cache@v4
         with:
@@ -130,7 +107,7 @@ jobs:
 
       - name: Set up ccache
         run: |
-          ccache -M 5G
+          ccache -M 8G
           ccache -z
 
       - name: Build kernel
@@ -141,6 +118,7 @@ jobs:
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
           export LTO=thin
+          export HERMETIC_TOOLCHAIN=0
           VARIANT="$VARIANT" \
           BUILD_CONFIG=msm-kernel/build.config.msm.kalama \
           EXT_MODULES="\
@@ -158,10 +136,9 @@ jobs:
           DIST="$ROOT_DIR/out/msm-kernel/dist"
           DEST="$GITHUB_WORKSPACE/dist"
           mkdir -p "$DEST"
-          for f in boot.img vendor_boot.img dtbo.img Image Image.gz; do
+          for f in boot.img vendor_boot.img dtbo.img Image Image.gz vendor_dlkm.img; do
             [ -f "$DIST/$f" ] && cp "$DIST/$f" "$DEST/" && echo "  $f"
           done
-          [ -f "$DIST/vendor_dlkm.img" ] && cp "$DIST/vendor_dlkm.img" "$DEST/"
           find "$DIST" -name '*.ko' | tar -czf "$DEST/modules.tar.gz" -T - 2>/dev/null || true
           ls -lh "$DEST"/
 
