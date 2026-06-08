@@ -58,7 +58,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache cpio curl flex git \
             kmod libelf-dev libssl-dev python3 rsync schedtool \
-            unzip zip \
+            unzip zip device-tree-compiler python3-pyelftools \
             clang-14 lld-14 llvm-14 clang-format-14
 
       - name: Configure git
@@ -98,10 +98,20 @@ jobs:
 
       - name: Clone Android kernel build scripts
         run: |
+          git clone --depth=1 -b android13-5.15 \
+            https://android.googlesource.com/kernel/build \
+            "$ROOT_DIR/build" || \
           git clone --depth=1 \
             https://android.googlesource.com/kernel/build \
-            "$ROOT_DIR/kernel/build"
-          ln -s "$ROOT_DIR/kernel/build" "$ROOT_DIR/build"
+            "$ROOT_DIR/build"
+
+      - name: Clone external/dtc
+        # build.config.msm.common runs compile_external_dtc() which
+        # cds into ${ROOT_DIR}/external/dtc — must exist or build aborts
+        run: |
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/external/dtc \
+            "$ROOT_DIR/external/dtc"
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -118,9 +128,9 @@ jobs:
           ccache -z
 
       - name: Build kernel
-        working-directory: ${{ env.ROOT_DIR }}
         run: |
           set -o pipefail
+          cd "$ROOT_DIR"
           export CCACHE_DIR=~/.cache/ccache
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
@@ -135,7 +145,7 @@ jobs:
             kernel/oneplus/sm8550-modules/qcom/opensource/graphics-kernel \
             kernel/oneplus/sm8550-modules/qcom/opensource/wlan/qcacld-3.0/.kiwi_v2 \
             kernel/oneplus/sm8550-modules/qcom/opensource/bt-kernel" \
-          build/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          "$ROOT_DIR/build/build.sh" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
       - name: Collect output images
         if: success()
