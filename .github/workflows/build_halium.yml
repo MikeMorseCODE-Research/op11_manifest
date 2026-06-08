@@ -57,8 +57,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache cpio curl flex git \
-            kmod libelf-dev libssl-dev python3 rsync schedtool \
-            unzip zip device-tree-compiler python3-pyelftools \
+            kmod libelf-dev libssl-dev python3 python3-pyelftools \
+            rsync schedtool unzip zip device-tree-compiler \
             clang-14 lld-14 llvm-14 clang-format-14
 
       - name: Configure git
@@ -78,6 +78,25 @@ jobs:
             echo -n "$t: "; "$PREBUILT_BIN/$t" --version 2>&1 | head -1
           done
 
+      - name: Clone kernel/build scripts
+        run: |
+          git clone --depth=1 -b android13-5.15 \
+            https://android.googlesource.com/kernel/build \
+            "$ROOT_DIR/build"
+          # Fail loudly if build.sh isn't there
+          test -f "$ROOT_DIR/build/build.sh" || {
+            echo "ERROR: build.sh missing. Repo contents:"; ls "$ROOT_DIR/build/"; exit 1
+          }
+          echo "build.sh found OK"
+
+      - name: Clone external/dtc
+        # build.config.msm.common calls compile_external_dtc() which
+        # requires this source tree — missing = immediate abort
+        run: |
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/external/dtc \
+            "$ROOT_DIR/external/dtc"
+
       - name: Clone kernel source
         run: |
           git clone --depth=1 -b droidian \
@@ -95,23 +114,6 @@ jobs:
           git clone --depth=1 -b droidian \
             https://github.com/MikeMorseCODE/android_kernel_oneplus_sm8550-devicetrees \
             "$ROOT_DIR/kernel/oneplus/sm8550-devicetrees"
-
-      - name: Clone Android kernel build scripts
-        run: |
-          git clone --depth=1 -b android13-5.15 \
-            https://android.googlesource.com/kernel/build \
-            "$ROOT_DIR/build" || \
-          git clone --depth=1 \
-            https://android.googlesource.com/kernel/build \
-            "$ROOT_DIR/build"
-
-      - name: Clone external/dtc
-        # build.config.msm.common runs compile_external_dtc() which
-        # cds into ${ROOT_DIR}/external/dtc — must exist or build aborts
-        run: |
-          git clone --depth=1 \
-            https://android.googlesource.com/platform/external/dtc \
-            "$ROOT_DIR/external/dtc"
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -136,6 +138,10 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           export LTO=thin
           export HERMETIC_TOOLCHAIN=0
+          # Override GKI_BUILD_CONFIG to avoid needing the common/ GKI repo.
+          # This builds everything from msm-kernel/ directly (standalone build).
+          export GKI_BUILD_CONFIG=
+          export GKI_SKIP_IF_VERSION_MATCHES=1
           VARIANT="$VARIANT" \
           BUILD_CONFIG=msm-kernel/build.config.msm.kalama \
           EXT_MODULES="\
