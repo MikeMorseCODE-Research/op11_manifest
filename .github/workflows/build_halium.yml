@@ -29,9 +29,9 @@ jobs:
 
     env:
       VARIANT: ${{ github.event.inputs.variant || 'gki' }}
-      ROOT_DIR: ${{ github.workspace }}/kws
-      KERNEL_DIR: msm-kernel
       CLANG_VERSION: r450784e
+      KDIR: ${{ github.workspace }}/msm-kernel
+      OUT:  ${{ github.workspace }}/out
 
     steps:
       - name: Free disk space
@@ -56,9 +56,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache cpio curl flex git \
-            kmod libelf-dev libssl-dev python3 python3-pyelftools \
-            rsync schedtool unzip zip device-tree-compiler \
+            bc bison build-essential binutils-aarch64-linux-gnu \
+            ccache cpio curl flex git kmod libelf-dev libssl-dev \
+            python3 python3-pyelftools rsync schedtool unzip zip \
             clang-14 lld-14 llvm-14 clang-format-14
 
       - name: Configure git
@@ -68,52 +68,22 @@ jobs:
 
       - name: Wire Clang 14 into prebuilts path
         run: |
-          PREBUILT_BIN="$ROOT_DIR/prebuilts/clang/host/linux-x86/clang-${CLANG_VERSION}/bin"
-          mkdir -p "$PREBUILT_BIN"
+          CLANG_BIN="$HOME/clang-${CLANG_VERSION}/bin"
+          mkdir -p "$CLANG_BIN"
           for f in /usr/lib/llvm-14/bin/*; do
-            ln -sf "$f" "$PREBUILT_BIN/$(basename "$f")"
+            ln -sf "$f" "$CLANG_BIN/$(basename "$f")"
           done
+          echo "CLANG_BIN=$CLANG_BIN" >> "$GITHUB_ENV"
           echo "=== sanity check ==="
           for t in clang clang++ ld.lld llvm-ar llvm-nm llvm-objcopy llvm-strip; do
-            echo -n "$t: "; "$PREBUILT_BIN/$t" --version 2>&1 | head -1
+            echo -n "$t: "; "$CLANG_BIN/$t" --version 2>&1 | head -1
           done
-
-      - name: Clone kernel/build scripts
-        run: |
-          git clone --depth=1 -b android13-5.15 \
-            https://android.googlesource.com/kernel/build \
-            "$ROOT_DIR/build"
-          # Fail loudly if build.sh isn't there
-          test -f "$ROOT_DIR/build/build.sh" || {
-            echo "ERROR: build.sh missing. Repo contents:"; ls "$ROOT_DIR/build/"; exit 1
-          }
-          echo "build.sh found OK"
-
-      - name: Clone external/dtc
-        # build.config.msm.common calls compile_external_dtc() which
-        # requires this source tree — missing = immediate abort
-        run: |
-          git clone --depth=1 \
-            https://android.googlesource.com/platform/external/dtc \
-            "$ROOT_DIR/external/dtc"
 
       - name: Clone kernel source
         run: |
           git clone --depth=1 -b droidian \
             https://github.com/MikeMorseCODE/kernel_oneplus_sm8550 \
-            "$ROOT_DIR/msm-kernel"
-
-      - name: Clone kernel modules
-        run: |
-          git clone --depth=1 -b droidian \
-            https://github.com/MikeMorseCODE/android_kernel_oneplus_sm8550-modules \
-            "$ROOT_DIR/kernel/oneplus/sm8550-modules"
-
-      - name: Clone devicetrees
-        run: |
-          git clone --depth=1 -b droidian \
-            https://github.com/MikeMorseCODE/android_kernel_oneplus_sm8550-devicetrees \
-            "$ROOT_DIR/kernel/oneplus/sm8550-devicetrees"
+            "$KDIR"
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -132,40 +102,65 @@ jobs:
       - name: Build kernel
         run: |
           set -o pipefail
-          cd "$ROOT_DIR"
-          export CCACHE_DIR=~/.cache/ccache
-          export USE_CCACHE=1
-          export CCACHE_EXEC=$(which ccache)
-          export LTO=thin
-          export HERMETIC_TOOLCHAIN=0
-          # Override GKI_BUILD_CONFIG to avoid needing the common/ GKI repo.
-          # This builds everything from msm-kernel/ directly (standalone build).
-          export GKI_BUILD_CONFIG=
-          export GKI_SKIP_IF_VERSION_MATCHES=1
-          VARIANT="$VARIANT" \
-          BUILD_CONFIG=msm-kernel/build.config.msm.kalama \
-          EXT_MODULES="\
-            kernel/oneplus/sm8550-modules/qcom/opensource/audio-kernel \
-            kernel/oneplus/sm8550-modules/qcom/opensource/camera-kernel \
-            kernel/oneplus/sm8550-modules/qcom/opensource/display-drivers/msm \
-            kernel/oneplus/sm8550-modules/qcom/opensource/graphics-kernel \
-            kernel/oneplus/sm8550-modules/qcom/opensource/wlan/qcacld-3.0/.kiwi_v2 \
-            kernel/oneplus/sm8550-modules/qcom/opensource/bt-kernel" \
-          "$ROOT_DIR/build/build.sh" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          mkdir -p "$OUT"
 
-      - name: Collect output images
+          export ARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
+          export PATH="$CLANG_BIN:$PATH"
+          export CCACHE_DIR=~/.cache/ccache
+          export CC="ccache clang"
+          export HOSTCC="ccache clang"
+          export HOSTCXX="ccache clang++"
+
+          cd "$KDIR"
+
+          echo "--- applying defconfig ---"
+          make O="$OUT" -j$(nproc) gki_defconfig
+
+          echo "--- merging config fragments ---"
+          for frag in \
+            arch/arm64/configs/vendor/kalama_GKI.config \
+            arch/arm64/configs/vendor/oplus/kalama_GKI.config \
+            arch/arm64/configs/vendor/debugfs.config \
+            arch/arm64/configs/vendor/droidian.config; do
+            if [ -f "$frag" ]; then
+              echo "  applying $frag"
+              scripts/kconfig/merge_config.sh -m \
+                -O "$OUT" "$OUT/.config" "$frag"
+            fi
+          done
+
+          echo "--- olddefconfig ---"
+          make O="$OUT" -j$(nproc) olddefconfig
+
+          echo "--- build ---"
+          make O="$OUT" -j$(nproc) Image modules \
+            2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+          echo "--- dtbs ---"
+          make O="$OUT" -j$(nproc) dtbs 2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
+
+      - name: Collect artifacts
         if: success()
         run: |
-          DIST="$ROOT_DIR/out/msm-kernel/dist"
           DEST="$GITHUB_WORKSPACE/dist"
           mkdir -p "$DEST"
-          for f in boot.img vendor_boot.img dtbo.img Image Image.gz vendor_dlkm.img; do
-            [ -f "$DIST/$f" ] && cp "$DIST/$f" "$DEST/" && echo "  $f"
-          done
-          find "$DIST" -name '*.ko' | tar -czf "$DEST/modules.tar.gz" -T - 2>/dev/null || true
+
+          # Kernel image
+          cp "$OUT/arch/arm64/boot/Image" "$DEST/" && echo "  Image"
+
+          # All DTBs
+          find "$OUT/arch/arm64/boot/dts" -name '*.dtb' -o -name '*.dtbo' | \
+            tar -czf "$DEST/dtbs.tar.gz" -T - && echo "  dtbs.tar.gz"
+
+          # All modules
+          find "$OUT" -name '*.ko' | \
+            tar -czf "$DEST/modules.tar.gz" -T - && echo "  modules.tar.gz"
+
           ls -lh "$DEST"/
 
-      - name: Upload kernel images
+      - name: Upload kernel artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
