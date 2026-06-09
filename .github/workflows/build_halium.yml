@@ -87,18 +87,16 @@ jobs:
       - name: Fix dangling OPlus symlinks
         run: |
           cd "$KDIR"
-          # thermal is a symlink to an unchecked-out repo — replace with stub
-          rm -f kernel/oplus_cpu/thermal
-          mkdir -p kernel/oplus_cpu/thermal
-          printf 'config OPLUS_FEATURE_THERMAL_HORAE\n\tbool "OPLUS thermal HORAE (stub)"\n\tdefault n\n' \
-            > kernel/oplus_cpu/thermal/Kconfig
-          # Catch any other dangling symlinks under kernel/oplus_cpu
-          find kernel/oplus_cpu -xtype l | while read link; do
-            echo "Stubbing dangling symlink: $link"
+          echo "Scanning for dangling symlinks..."
+          find . -xtype l | while read link; do
+            target=$(readlink "$link")
+            echo "  stub: $link -> $target"
             rm "$link"
             mkdir -p "$link"
-            printf '# stub\n' > "$link/Kconfig" 2>/dev/null || true
+            printf '# stub for missing OPlus source: %s\n' "$target" \
+              > "$link/Kconfig"
           done
+          echo "Done. Stubs created."
 
       - name: Cache ccache
         uses: actions/cache@v4
