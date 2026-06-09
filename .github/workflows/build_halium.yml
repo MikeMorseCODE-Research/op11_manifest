@@ -71,7 +71,8 @@ jobs:
       - name: Fix dangling OPlus symlinks
         run: |
           cd "$KDIR"
-          find . -xtype l | while IFS= read -r link; do
+          # Use find -L -type l which reliably catches dangling symlinks
+          find -L . -type l 2>/dev/null | while IFS= read -r link; do
             target="$(readlink "$link")"
             rm -f "$link"
             mkdir -p "$link"
@@ -79,9 +80,12 @@ jobs:
               > "$link/Kconfig"
             touch "$link/Makefile"
           done
-          echo "Dangling symlinks remaining: $(find . -xtype l | wc -l)"
+          remaining=$(find -L . -type l 2>/dev/null | wc -l)
+          echo "Dangling symlinks remaining: $remaining"
+          # Verify the boot symlink was stubbed
+          ls -la include/soc/oplus/ || true
 
-      - name: Stub missing OPlus headers
+      - name: Stub missing OPlus headers (Python scan)
         run: |
           python3 << 'PYEOF'
           import os, re
@@ -91,12 +95,22 @@ jobs:
           ifdef_oplus   = re.compile(r'#\s*ifdef\s+OPLUS_ARCH_EXTENDS')
           ifdef_generic = re.compile(r'#\s*if(?:def|ndef)\s+\w+')
           endif_re      = re.compile(r'#\s*endif')
-          include_re    = re.compile(r'#\s*include\s+["<]([^">]+)[">]')
+          rel_inc_re    = re.compile(r'#\s*include\s+"([^"]+)"')
+          abs_inc_re    = re.compile(r'#\s*include\s+<([^>]*oplus[^>]*)>', re.IGNORECASE)
 
-          stubs_created = []
+          stubs = []
+
+          def ensure_stub(path):
+              if not os.path.lexists(path):
+                  try:
+                      os.makedirs(os.path.dirname(path), exist_ok=True)
+                      open(path, 'w').close()
+                      stubs.append(path)
+                  except Exception as e:
+                      print(f"  WARN could not create {path}: {e}")
 
           for root, dirs, files in os.walk(kdir):
-              dirs[:] = [d for d in dirs if d != 'out']
+              dirs[:] = [d for d in dirs if d not in ('out', '.git')]
               for fname in files:
                   if not fname.endswith(('.c', '.h', '.cpp')):
                       continue
@@ -110,33 +124,99 @@ jobs:
                   oplus_depth = None
 
                   for line in lines:
-                      stripped = line.strip()
-                      if ifdef_oplus.search(stripped):
+                      s = line.strip()
+
+                      if ifdef_oplus.search(s):
                           depth += 1
                           if oplus_depth is None:
                               oplus_depth = depth
-                      elif ifdef_generic.search(stripped):
+                      elif ifdef_generic.search(s):
                           depth += 1
-                      elif endif_re.search(stripped):
+                      elif endif_re.search(s):
                           if oplus_depth is not None and depth == oplus_depth:
                               oplus_depth = None
                           depth = max(depth - 1, 0)
-                      elif oplus_depth is not None:
-                          m = include_re.search(stripped)
-                          if m:
-                              inc = m.group(1)
-                              inc_abs = os.path.normpath(
-                                  os.path.join(os.path.dirname(fpath), inc)
-                              )
-                              if not os.path.exists(inc_abs):
-                                  os.makedirs(os.path.dirname(inc_abs), exist_ok=True)
-                                  open(inc_abs, 'w').close()
-                                  stubs_created.append(inc_abs)
 
-          print(f"Stub headers created: {len(stubs_created)}")
-          for s in sorted(stubs_created):
+                      # Relative includes inside OPLUS_ARCH_EXTENDS
+                      if oplus_depth is not None:
+                          m = rel_inc_re.search(s)
+                          if m:
+                              inc_abs = os.path.normpath(
+                                  os.path.join(os.path.dirname(fpath), m.group(1))
+                              )
+                              ensure_stub(inc_abs)
+
+                      # Angle-bracket oplus includes anywhere in tree
+                      m = abs_inc_re.search(s)
+                      if m:
+                          inc_path = m.group(1)
+                          for base in (os.path.join(kdir, 'include'), kdir):
+                              ensure_stub(os.path.join(base, inc_path))
+
+          print(f"Stub headers created: {len(stubs)}")
+          for s in sorted(stubs):
               print(f"  {s}")
           PYEOF
+
+      - name: Patch known OPlus forwarding-header stubs
+        run: |
+          # include/soc/oplus/system/*.h are real files that forward-include into
+          # include/soc/oplus/boot/ (a dangling symlink, now stub dir). Create
+          # proper stub targets with enough type definitions to compile.
+
+          BOOT="$KDIR/include/soc/oplus/boot"
+          mkdir -p "$BOOT"
+
+          cat > "$BOOT/boot_mode.h" << 'EOF'
+          /* Auto-generated stub: missing OPlus vendor source */
+          #ifndef __OPLUS_BOOT_MODE_H__
+          #define __OPLUS_BOOT_MODE_H__
+          enum MSM_BOOT_TYPE {
+              MSM_BOOT_MODE__NORMAL   = 0,
+              MSM_BOOT_MODE__FASTBOOT = 1,
+              MSM_BOOT_MODE__RECOVERY = 2,
+              MSM_BOOT_MODE__CHARGE   = 3,
+              MSM_BOOT_MODE__FACTORY2 = 4,
+              MSM_BOOT_MODE__RF       = 5,
+              MSM_BOOT_MODE__WLAN     = 6,
+              MSM_BOOT_MODE__MOS      = 7,
+              MSM_BOOT_MODE__AGING    = 8,
+              MSM_BOOT_MODE__SILENCE  = 9,
+              MSM_BOOT_MODE__SAU      = 10,
+              MSM_BOOT_MODE__SAE      = 11,
+              BOOT_MODE_MAX,
+          };
+          extern unsigned int get_boot_mode(void);
+          #endif /* __OPLUS_BOOT_MODE_H__ */
+          EOF
+
+          # Minimal stub for oplus_project.h
+          cat > "$BOOT/oplus_project.h" << 'EOF'
+          /* Auto-generated stub: missing OPlus vendor source */
+          #ifndef __OPLUS_PROJECT_H__
+          #define __OPLUS_PROJECT_H__
+          static inline unsigned int get_project(void) { return 0; }
+          static inline unsigned int get_PCB_Version(void) { return 0; }
+          static inline unsigned int get_Modem_Version(void) { return 0; }
+          #endif /* __OPLUS_PROJECT_H__ */
+          EOF
+
+          # Catch-all: any other headers that land in this boot dir
+          for f in "$BOOT"/*.h; do
+            [ -e "$f" ] || true  # glob may not match anything
+          done
+
+          echo "Boot stubs written:"
+          ls -la "$BOOT/"
+
+          # Also ensure device_info.h forwarding stub exists in include path
+          touch "$KDIR/include/soc/oplus/device_info.h"
+
+          # Stub out dfr/dft dirs which are also dangling symlinks under include/soc/oplus
+          for d in dfr dft; do
+            mkdir -p "$KDIR/include/soc/oplus/$d"
+            touch "$KDIR/include/soc/oplus/$d/oplus_${d}.h" 2>/dev/null || true
+          done
 
       - name: Patch oplus_audio_switch stub with needed declarations
         run: |
@@ -167,16 +247,11 @@ jobs:
 
       - name: Generate OPlus config disable fragment
         run: |
-          # Makefiles use #ifdef as comments — all obj-$(CONFIG_*) lines are
-          # always active regardless of those guards. Scan every Makefile for
-          # obj entries that reference oplus paths and disable those configs
-          # so the build system never tries to compile the missing source files.
           python3 << 'PYEOF'
           import os, re
 
           kdir = os.environ['KDIR']
 
-          # Match: obj-$(CONFIG_FOO) += something/with/oplus or oplus_something
           obj_re = re.compile(
               r'obj-\$\((CONFIG_[A-Z0-9_]+)\)\s*\+=[^\n]*oplus',
               re.IGNORECASE
@@ -197,7 +272,6 @@ jobs:
                   for m in obj_re.finditer(content):
                       configs.add(m.group(1))
 
-          # Also always disable FSA4480 (heavily OPlus-modified, needs vendor src)
           configs.add('CONFIG_FSA4480_I2C')
 
           frag = os.path.join(kdir, 'arch/arm64/configs/vendor/oplus_stub_disable.config')
