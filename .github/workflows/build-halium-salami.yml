@@ -75,7 +75,7 @@ jobs:
             target="$(readlink "$link")"
             rm -f "$link"
             mkdir -p "$link"
-            printf '# stub \342\200\224 missing OPlus source: %s\n' "$target" \
+            printf '# stub - missing OPlus source: %s\n' "$target" \
               > "$link/Kconfig"
             touch "$link/Makefile"
           done
@@ -159,48 +159,57 @@ jobs:
 
           kdir = os.environ['KDIR']
 
-          BOOT_MODE_H = """/* Auto-generated stub: missing OPlus vendor source */
-#ifndef __OPLUS_BOOT_MODE_H__
-#define __OPLUS_BOOT_MODE_H__
-enum MSM_BOOT_TYPE {
-    MSM_BOOT_MODE__NORMAL    = 0,
-    MSM_BOOT_MODE__FASTBOOT  = 1,
-    MSM_BOOT_MODE__RECOVERY  = 2,
-    MSM_BOOT_MODE__CHARGE    = 3,
-    MSM_BOOT_MODE__FACTORY2  = 4,
-    MSM_BOOT_MODE__RF        = 5,
-    MSM_BOOT_MODE__WLAN      = 6,
-    MSM_BOOT_MODE__MOS       = 7,
-    MSM_BOOT_MODE__AGING     = 8,
-    MSM_BOOT_MODE__SILENCE   = 9,
-    MSM_BOOT_MODE__SAU       = 10,
-    MSM_BOOT_MODE__SAE       = 11,
-    MSM_BOOT_MODE__FACTORY   = 12,
-    MSM_BOOT_MODE__FACTORY3  = 13,
-    BOOT_MODE_MAX,
-};
-extern unsigned int get_boot_mode(void);
-#endif /* __OPLUS_BOOT_MODE_H__ */
-"""
+          boot_mode_lines = [
+              '/* Auto-generated stub: missing OPlus vendor source */',
+              '#ifndef __OPLUS_BOOT_MODE_H__',
+              '#define __OPLUS_BOOT_MODE_H__',
+              'enum MSM_BOOT_TYPE {',
+              '    MSM_BOOT_MODE__NORMAL    = 0,',
+              '    MSM_BOOT_MODE__FASTBOOT  = 1,',
+              '    MSM_BOOT_MODE__RECOVERY  = 2,',
+              '    MSM_BOOT_MODE__CHARGE    = 3,',
+              '    MSM_BOOT_MODE__FACTORY2  = 4,',
+              '    MSM_BOOT_MODE__RF        = 5,',
+              '    MSM_BOOT_MODE__WLAN      = 6,',
+              '    MSM_BOOT_MODE__MOS       = 7,',
+              '    MSM_BOOT_MODE__AGING     = 8,',
+              '    MSM_BOOT_MODE__SILENCE   = 9,',
+              '    MSM_BOOT_MODE__SAU       = 10,',
+              '    MSM_BOOT_MODE__SAE       = 11,',
+              '    MSM_BOOT_MODE__FACTORY   = 12,',
+              '    MSM_BOOT_MODE__FACTORY3  = 13,',
+              '    BOOT_MODE_MAX,',
+              '};',
+              'extern unsigned int get_boot_mode(void);',
+              '#endif /* __OPLUS_BOOT_MODE_H__ */',
+          ]
+          boot_mode_h = '\n'.join(boot_mode_lines) + '\n'
 
-          OPLUS_PROJECT_H = """/* Auto-generated stub: missing OPlus vendor source */
-#ifndef __OPLUS_PROJECT_H__
-#define __OPLUS_PROJECT_H__
-static inline unsigned int get_project(void) { return 0; }
-static inline unsigned int get_PCB_Version(void) { return 0; }
-static inline unsigned int get_Modem_Version(void) { return 0; }
-#endif /* __OPLUS_PROJECT_H__ */
-"""
+          project_lines = [
+              '/* Auto-generated stub: missing OPlus vendor source */',
+              '#ifndef __OPLUS_PROJECT_H__',
+              '#define __OPLUS_PROJECT_H__',
+              'static inline unsigned int get_project(void) { return 0; }',
+              'static inline unsigned int get_PCB_Version(void) { return 0; }',
+              'static inline unsigned int get_Modem_Version(void) { return 0; }',
+              '#endif /* __OPLUS_PROJECT_H__ */',
+          ]
+          oplus_project_h = '\n'.join(project_lines) + '\n'
 
-          # Write to every location the kernel might search
           for base in ('include/soc/oplus/boot', 'soc/oplus/boot'):
               d = os.path.join(kdir, base)
               os.makedirs(d, exist_ok=True)
               with open(os.path.join(d, 'boot_mode.h'), 'w') as f:
-                  f.write(BOOT_MODE_H)
+                  f.write(boot_mode_h)
               with open(os.path.join(d, 'oplus_project.h'), 'w') as f:
-                  f.write(OPLUS_PROJECT_H)
-              print(f"Written stubs to {d}")
+                  f.write(oplus_project_h)
+              print(f'Written stubs to {d}')
+
+          # Verify FACTORY is present
+          check = os.path.join(kdir, 'include/soc/oplus/boot/boot_mode.h')
+          content = open(check).read()
+          assert 'MSM_BOOT_MODE__FACTORY ' in content, 'FACTORY missing from stub!'
+          print(f'Verified: MSM_BOOT_MODE__FACTORY present in {check}')
           PYEOF
 
       - name: Patch oplus_audio_switch stub with needed declarations
