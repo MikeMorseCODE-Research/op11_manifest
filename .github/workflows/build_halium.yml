@@ -74,7 +74,6 @@ jobs:
             ln -sf "$f" "$CLANG_BIN/$(basename "$f")"
           done
           echo "CLANG_BIN=$CLANG_BIN" >> "$GITHUB_ENV"
-          echo "=== sanity check ==="
           for t in clang clang++ ld.lld llvm-ar llvm-nm llvm-objcopy llvm-strip; do
             echo -n "$t: "; "$CLANG_BIN/$t" --version 2>&1 | head -1
           done
@@ -84,6 +83,15 @@ jobs:
           git clone --depth=1 -b droidian \
             https://github.com/MikeMorseCODE/kernel_oneplus_sm8550 \
             "$KDIR"
+
+      - name: Create OPlus Kconfig stubs
+        run: |
+          mkdir -p "$KDIR/kernel/oplus_cpu/thermal"
+          cat > "$KDIR/kernel/oplus_cpu/thermal/Kconfig" << 'EOF'
+          config OPLUS_FEATURE_THERMAL_HORAE
+              bool "OPLUS thermal HORAE (stub)"
+              default n
+          EOF
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -115,10 +123,10 @@ jobs:
 
           cd "$KDIR"
 
-          echo "--- applying defconfig ---"
+          echo "--- defconfig ---"
           make O="$OUT" -j$(nproc) gki_defconfig
 
-          echo "--- merging config fragments ---"
+          echo "--- merging fragments ---"
           for frag in \
             arch/arm64/configs/vendor/kalama_GKI.config \
             arch/arm64/configs/vendor/oplus/kalama_GKI.config \
@@ -146,18 +154,11 @@ jobs:
         run: |
           DEST="$GITHUB_WORKSPACE/dist"
           mkdir -p "$DEST"
-
-          # Kernel image
           cp "$OUT/arch/arm64/boot/Image" "$DEST/" && echo "  Image"
-
-          # All DTBs
           find "$OUT/arch/arm64/boot/dts" -name '*.dtb' -o -name '*.dtbo' | \
             tar -czf "$DEST/dtbs.tar.gz" -T - && echo "  dtbs.tar.gz"
-
-          # All modules
           find "$OUT" -name '*.ko' | \
             tar -czf "$DEST/modules.tar.gz" -T - && echo "  modules.tar.gz"
-
           ls -lh "$DEST"/
 
       - name: Upload kernel artifacts
