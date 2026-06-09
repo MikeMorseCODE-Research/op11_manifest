@@ -77,6 +77,7 @@ jobs:
             mkdir -p "$link"
             printf '# stub — missing OPlus source: %s\n' "$target" \
               > "$link/Kconfig"
+            touch "$link/Makefile"
           done
           echo "Dangling symlinks remaining: $(find . -xtype l | wc -l)"
 
@@ -139,10 +140,6 @@ jobs:
 
       - name: Patch oplus_audio_switch stub with needed declarations
         run: |
-          # The relative include "../../power/oplus/v2/include/oplus_audio_switch.h"
-          # from drivers/soc/qcom/ resolves to drivers/power/oplus/v2/include/.
-          # Use find to locate wherever Python created the stub, then patch it.
-          # Also create at both possible paths as a safety net.
           STUB_CONTENT='/* Auto-generated stub: missing OPlus vendor source */
           #pragma once
           #include <linux/notifier.h>
@@ -151,7 +148,6 @@ jobs:
           static inline int unregister_chg_glink_notifier(struct notifier_block *nb)
           { (void)nb; return 0; }'
 
-          # Patch any stubs Python already created
           found=0
           while IFS= read -r f; do
             printf '%s\n' "$STUB_CONTENT" > "$f"
@@ -159,7 +155,6 @@ jobs:
             found=1
           done < <(find "$KDIR" -path "*/power/oplus/v2/include/oplus_audio_switch.h" 2>/dev/null)
 
-          # If Python didn't create it, seed both plausible resolved paths
           if [ "$found" -eq 0 ]; then
             for dir in \
               "$KDIR/drivers/power/oplus/v2/include" \
