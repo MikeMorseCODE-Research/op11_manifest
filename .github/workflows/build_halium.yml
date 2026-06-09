@@ -48,7 +48,7 @@ jobs:
             clang-14 lld-14 llvm-14 clang-format-14 \
             bc bison build-essential binutils-aarch64-linux-gnu \
             cpio flex git libelf-dev libssl-dev libncurses-dev \
-            python3 python3-pip rsync wget zip ccache
+            python3 rsync wget zip ccache
 
       - name: Wire Clang 14 into prebuilts path
         run: |
@@ -78,13 +78,12 @@ jobs:
             printf '# stub — missing OPlus source: %s\n' "$target" \
               > "$link/Kconfig"
           done
-          remaining=$(find . -xtype l | wc -l)
-          echo "Dangling symlinks remaining: $remaining"
+          echo "Dangling symlinks remaining: $(find . -xtype l | wc -l)"
 
       - name: Stub missing OPlus headers
         run: |
           python3 << 'PYEOF'
-          import os, re, pathlib
+          import os, re
 
           kdir = os.environ['KDIR']
 
@@ -96,7 +95,6 @@ jobs:
           stubs_created = []
 
           for root, dirs, files in os.walk(kdir):
-              # skip the out directory if it exists
               dirs[:] = [d for d in dirs if d != 'out']
               for fname in files:
                   if not fname.endswith(('.c', '.h', '.cpp')):
@@ -107,8 +105,8 @@ jobs:
                   except Exception:
                       continue
 
-                  depth = 0          # nesting depth
-                  oplus_depth = None # depth at which the oplus ifdef opened
+                  depth = 0
+                  oplus_depth = None
 
                   for line in lines:
                       stripped = line.strip()
@@ -126,7 +124,6 @@ jobs:
                           m = include_re.search(stripped)
                           if m:
                               inc = m.group(1)
-                              # resolve relative to the source file's directory
                               inc_abs = os.path.normpath(
                                   os.path.join(os.path.dirname(fpath), inc)
                               )
@@ -139,6 +136,21 @@ jobs:
           for s in sorted(stubs_created):
               print(f"  {s}")
           PYEOF
+
+      - name: Patch oplus_audio_switch stub with needed declarations
+        run: |
+          # fsa4480-i2c.c calls these OPlus-added functions declared in this header.
+          # Provide no-op stubs so the driver compiles; FSA4480 is also disabled
+          # below via config so these paths are never executed at runtime.
+          cat > "$KDIR/power/oplus/v2/include/oplus_audio_switch.h" << 'EOF'
+          /* Auto-generated stub: missing OPlus vendor source */
+          #pragma once
+          #include <linux/notifier.h>
+          static inline int register_chg_glink_notifier(struct notifier_block *nb)
+          { return 0; }
+          static inline int unregister_chg_glink_notifier(struct notifier_block *nb)
+          { return 0; }
+          EOF
 
       - name: Configure kernel
         run: |
@@ -161,6 +173,9 @@ jobs:
                 "$OUT/.config" "$frag"
             fi
           done
+          # Disable FSA4480 — OPlus modifications to this driver require
+          # vendor source not present in this tree
+          printf '\n# CONFIG_FSA4480_I2C is not set\n' >> "$OUT/.config"
           make O="$OUT" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             -j$(nproc) olddefconfig
