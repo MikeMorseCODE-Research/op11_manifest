@@ -139,18 +139,36 @@ jobs:
 
       - name: Patch oplus_audio_switch stub with needed declarations
         run: |
-          # fsa4480-i2c.c calls these OPlus-added functions declared in this header.
-          # Provide no-op stubs so the driver compiles; FSA4480 is also disabled
-          # below via config so these paths are never executed at runtime.
-          cat > "$KDIR/power/oplus/v2/include/oplus_audio_switch.h" << 'EOF'
-          /* Auto-generated stub: missing OPlus vendor source */
+          # The relative include "../../power/oplus/v2/include/oplus_audio_switch.h"
+          # from drivers/soc/qcom/ resolves to drivers/power/oplus/v2/include/.
+          # Use find to locate wherever Python created the stub, then patch it.
+          # Also create at both possible paths as a safety net.
+          STUB_CONTENT='/* Auto-generated stub: missing OPlus vendor source */
           #pragma once
           #include <linux/notifier.h>
           static inline int register_chg_glink_notifier(struct notifier_block *nb)
-          { return 0; }
+          { (void)nb; return 0; }
           static inline int unregister_chg_glink_notifier(struct notifier_block *nb)
-          { return 0; }
-          EOF
+          { (void)nb; return 0; }'
+
+          # Patch any stubs Python already created
+          found=0
+          while IFS= read -r f; do
+            printf '%s\n' "$STUB_CONTENT" > "$f"
+            echo "Patched: $f"
+            found=1
+          done < <(find "$KDIR" -path "*/power/oplus/v2/include/oplus_audio_switch.h" 2>/dev/null)
+
+          # If Python didn't create it, seed both plausible resolved paths
+          if [ "$found" -eq 0 ]; then
+            for dir in \
+              "$KDIR/drivers/power/oplus/v2/include" \
+              "$KDIR/power/oplus/v2/include"; do
+              mkdir -p "$dir"
+              printf '%s\n' "$STUB_CONTENT" > "$dir/oplus_audio_switch.h"
+              echo "Created: $dir/oplus_audio_switch.h"
+            done
+          fi
 
       - name: Configure kernel
         run: |
@@ -173,8 +191,7 @@ jobs:
                 "$OUT/.config" "$frag"
             fi
           done
-          # Disable FSA4480 — OPlus modifications to this driver require
-          # vendor source not present in this tree
+          # Disable FSA4480 — OPlus modifications require vendor source not in this tree
           printf '\n# CONFIG_FSA4480_I2C is not set\n' >> "$OUT/.config"
           make O="$OUT" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
