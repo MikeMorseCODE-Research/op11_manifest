@@ -29,159 +29,185 @@ jobs:
 
     env:
       VARIANT: ${{ github.event.inputs.variant || 'gki' }}
-      CLANG_VERSION: r450784e
       KDIR: ${{ github.workspace }}/msm-kernel
       OUT:  ${{ github.workspace }}/out
 
     steps:
       - name: Free disk space
         run: |
-          echo "Before:"; df -h /
-          sudo rm -rf \
-            /usr/local/lib/android \
-            /usr/share/dotnet \
-            /usr/local/share/powershell \
-            /usr/share/swift \
-            /usr/local/.ghcup \
-            /usr/lib/jvm \
-            /opt/hostedtoolcache/CodeQL \
-            /opt/az \
-            /usr/share/miniconda \
-            "$AGENT_TOOLSDIRECTORY"
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           sudo apt-get clean
           docker system prune -af 2>/dev/null || true
-          echo "After:"; df -h /
+          df -h
 
       - name: Install build dependencies + Clang 14
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get install -y \
+            clang-14 lld-14 llvm-14 clang-format-14 \
             bc bison build-essential binutils-aarch64-linux-gnu \
-            ccache cpio curl flex git kmod libelf-dev libssl-dev \
-            python3 python3-pyelftools rsync schedtool unzip zip \
-            clang-14 lld-14 llvm-14 clang-format-14
-
-      - name: Configure git
-        run: |
-          git config --global user.email "build-bot@halium-salami"
-          git config --global user.name "Halium Build Bot"
+            cpio flex git libelf-dev libssl-dev libncurses-dev \
+            python3 python3-pip rsync wget zip ccache
 
       - name: Wire Clang 14 into prebuilts path
         run: |
-          CLANG_BIN="$HOME/clang-${CLANG_VERSION}/bin"
+          CLANG_BIN="$HOME/clang-r450784e/bin"
           mkdir -p "$CLANG_BIN"
           for f in /usr/lib/llvm-14/bin/*; do
             ln -sf "$f" "$CLANG_BIN/$(basename "$f")"
           done
-          echo "CLANG_BIN=$CLANG_BIN" >> "$GITHUB_ENV"
-          for t in clang clang++ ld.lld llvm-ar llvm-nm llvm-objcopy llvm-strip; do
-            echo -n "$t: "; "$CLANG_BIN/$t" --version 2>&1 | head -1
+          for f in /usr/bin/aarch64-linux-gnu-*; do
+            ln -sf "$f" "$CLANG_BIN/$(basename "$f")"
           done
+          echo "CLANG_BIN=$CLANG_BIN" >> "$GITHUB_ENV"
+          "$CLANG_BIN/clang" --version
 
       - name: Clone kernel source
         run: |
           git clone --depth=1 -b droidian \
-            https://github.com/MikeMorseCODE/kernel_oneplus_sm8550 \
-            "$KDIR"
+            https://github.com/MikeMorseCODE/kernel_oneplus_sm8550 "$KDIR"
 
       - name: Fix dangling OPlus symlinks
         run: |
           cd "$KDIR"
-          echo "Scanning for dangling symlinks..."
-          find . -xtype l | while read link; do
-            target=$(readlink "$link")
-            echo "  stub: $link -> $target"
-            rm "$link"
+          find . -xtype l | while IFS= read -r link; do
+            target="$(readlink "$link")"
+            rm -f "$link"
             mkdir -p "$link"
-            printf '# stub for missing OPlus source: %s\n' "$target" \
+            printf '# stub — missing OPlus source: %s\n' "$target" \
               > "$link/Kconfig"
           done
-          echo "Done. Stubs created."
+          remaining=$(find . -xtype l | wc -l)
+          echo "Dangling symlinks remaining: $remaining"
 
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ccache
-          key: ccache-kalama-${{ env.VARIANT }}-${{ github.sha }}
-          restore-keys: |
-            ccache-kalama-${{ env.VARIANT }}-
-            ccache-kalama-
-
-      - name: Set up ccache
+      - name: Stub missing OPlus headers
         run: |
-          ccache -M 8G
-          ccache -z
+          python3 << 'PYEOF'
+          import os, re, pathlib
 
-      - name: Build kernel
+          kdir = os.environ['KDIR']
+
+          ifdef_oplus   = re.compile(r'#\s*ifdef\s+OPLUS_ARCH_EXTENDS')
+          ifdef_generic = re.compile(r'#\s*if(?:def|ndef)\s+\w+')
+          endif_re      = re.compile(r'#\s*endif')
+          include_re    = re.compile(r'#\s*include\s+["<]([^">]+)[">]')
+
+          stubs_created = []
+
+          for root, dirs, files in os.walk(kdir):
+              # skip the out directory if it exists
+              dirs[:] = [d for d in dirs if d != 'out']
+              for fname in files:
+                  if not fname.endswith(('.c', '.h', '.cpp')):
+                      continue
+                  fpath = os.path.join(root, fname)
+                  try:
+                      lines = open(fpath, encoding='utf-8', errors='replace').readlines()
+                  except Exception:
+                      continue
+
+                  depth = 0          # nesting depth
+                  oplus_depth = None # depth at which the oplus ifdef opened
+
+                  for line in lines:
+                      stripped = line.strip()
+                      if ifdef_oplus.search(stripped):
+                          depth += 1
+                          if oplus_depth is None:
+                              oplus_depth = depth
+                      elif ifdef_generic.search(stripped):
+                          depth += 1
+                      elif endif_re.search(stripped):
+                          if oplus_depth is not None and depth == oplus_depth:
+                              oplus_depth = None
+                          depth = max(depth - 1, 0)
+                      elif oplus_depth is not None:
+                          m = include_re.search(stripped)
+                          if m:
+                              inc = m.group(1)
+                              # resolve relative to the source file's directory
+                              inc_abs = os.path.normpath(
+                                  os.path.join(os.path.dirname(fpath), inc)
+                              )
+                              if not os.path.exists(inc_abs):
+                                  os.makedirs(os.path.dirname(inc_abs), exist_ok=True)
+                                  open(inc_abs, 'w').close()
+                                  stubs_created.append(inc_abs)
+
+          print(f"Stub headers created: {len(stubs_created)}")
+          for s in sorted(stubs_created):
+              print(f"  {s}")
+          PYEOF
+
+      - name: Configure kernel
         run: |
-          set -o pipefail
-          mkdir -p "$OUT"
-
-          export ARCH=arm64
-          export LLVM=1
-          export LLVM_IAS=1
+          export ARCH=arm64 LLVM=1 LLVM_IAS=1
           export PATH="$CLANG_BIN:$PATH"
-          export CCACHE_DIR=~/.cache/ccache
-          export CC="ccache clang"
-          export HOSTCC="ccache clang"
-          export HOSTCXX="ccache clang++"
-
+          export CROSS_COMPILE=aarch64-linux-gnu-
           cd "$KDIR"
-
-          echo "--- defconfig ---"
-          make O="$OUT" -j$(nproc) gki_defconfig
-
-          echo "--- merging fragments ---"
+          mkdir -p "$OUT"
+          make O="$OUT" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            -j$(nproc) gki_defconfig
           for frag in \
             arch/arm64/configs/vendor/kalama_GKI.config \
             arch/arm64/configs/vendor/oplus/kalama_GKI.config \
             arch/arm64/configs/vendor/debugfs.config \
             arch/arm64/configs/vendor/droidian.config; do
             if [ -f "$frag" ]; then
-              echo "  applying $frag"
-              scripts/kconfig/merge_config.sh -m \
-                -O "$OUT" "$OUT/.config" "$frag"
+              echo "Merging fragment: $frag"
+              ./scripts/kconfig/merge_config.sh -m -O "$OUT" \
+                "$OUT/.config" "$frag"
             fi
           done
+          make O="$OUT" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            -j$(nproc) olddefconfig
 
-          echo "--- olddefconfig ---"
-          make O="$OUT" -j$(nproc) olddefconfig
-
-          echo "--- build ---"
-          make O="$OUT" -j$(nproc) Image modules \
+      - name: Build kernel
+        run: |
+          export ARCH=arm64 LLVM=1 LLVM_IAS=1
+          export PATH="$CLANG_BIN:$PATH"
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CCACHE_DIR="$HOME/.ccache"
+          ccache -M 8G
+          cd "$KDIR"
+          make O="$OUT" \
+            ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CC="ccache clang" \
+            HOSTCC="ccache clang" \
+            HOSTCXX="ccache clang++" \
+            -j$(nproc) Image modules dtbs \
             2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
-          echo "--- dtbs ---"
-          make O="$OUT" -j$(nproc) dtbs 2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
-
-      - name: Collect artifacts
-        if: success()
+      - name: Package artifacts
         run: |
-          DEST="$GITHUB_WORKSPACE/dist"
-          mkdir -p "$DEST"
-          cp "$OUT/arch/arm64/boot/Image" "$DEST/" && echo "  Image"
-          find "$OUT/arch/arm64/boot/dts" -name '*.dtb' -o -name '*.dtbo' | \
-            tar -czf "$DEST/dtbs.tar.gz" -T - && echo "  dtbs.tar.gz"
-          find "$OUT" -name '*.ko' | \
-            tar -czf "$DEST/modules.tar.gz" -T - && echo "  modules.tar.gz"
-          ls -lh "$DEST"/
-
-      - name: Upload kernel artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kalama-${{ env.VARIANT }}-${{ github.run_number }}
-          path: dist/
-          retention-days: 14
+          DIST="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$DIST"
+          cp "$OUT/arch/arm64/boot/Image" "$DIST/"
+          make -C "$KDIR" O="$OUT" \
+            ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            INSTALL_MOD_PATH="$DIST/modules_root" \
+            modules_install
+          tar -czf "$DIST/modules.tar.gz" -C "$DIST/modules_root" .
+          find "$OUT/arch/arm64/boot/dts" -name "*.dtb" \
+            -exec cp {} "$DIST/" \;
+          ls -lh "$DIST/"
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log-${{ github.run_number }}
-          path: build.log
+          name: build-log
+          path: ${{ github.workspace }}/build.log
           retention-days: 7
 
-      - name: ccache stats
-        if: always()
-        run: ccache -s
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kalama-kernel-${{ github.event.inputs.variant || 'gki' }}-${{ github.run_number }}
+          path: ${{ github.workspace }}/dist/
+          retention-days: 30
