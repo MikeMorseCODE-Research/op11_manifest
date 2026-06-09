@@ -71,8 +71,7 @@ jobs:
       - name: Fix dangling OPlus symlinks
         run: |
           cd "$KDIR"
-          # Use find -L -type l which reliably catches dangling symlinks
-          find -L . -type l 2>/dev/null | while IFS= read -r link; do
+          find . -xtype l | while IFS= read -r link; do
             target="$(readlink "$link")"
             rm -f "$link"
             mkdir -p "$link"
@@ -80,10 +79,7 @@ jobs:
               > "$link/Kconfig"
             touch "$link/Makefile"
           done
-          remaining=$(find -L . -type l 2>/dev/null | wc -l)
-          echo "Dangling symlinks remaining: $remaining"
-          # Verify the boot symlink was stubbed
-          ls -la include/soc/oplus/ || true
+          echo "Dangling symlinks remaining: $(find . -xtype l | wc -l)"
 
       - name: Stub missing OPlus headers (Python scan)
         run: |
@@ -101,15 +97,16 @@ jobs:
           stubs = []
 
           def ensure_stub(path):
+              # Use lexists so we don't follow symlinks when checking existence
               if not os.path.lexists(path):
                   try:
                       os.makedirs(os.path.dirname(path), exist_ok=True)
                       open(path, 'w').close()
                       stubs.append(path)
                   except Exception as e:
-                      print(f"  WARN could not create {path}: {e}")
+                      print(f"  WARN: could not create {path}: {e}")
 
-          for root, dirs, files in os.walk(kdir):
+          for root, dirs, files in os.walk(kdir, followlinks=False):
               dirs[:] = [d for d in dirs if d not in ('out', '.git')]
               for fname in files:
                   if not fname.endswith(('.c', '.h', '.cpp')):
@@ -160,9 +157,9 @@ jobs:
 
       - name: Patch known OPlus forwarding-header stubs
         run: |
-          # include/soc/oplus/system/*.h are real files that forward-include into
-          # include/soc/oplus/boot/ (a dangling symlink, now stub dir). Create
-          # proper stub targets with enough type definitions to compile.
+          # include/soc/oplus/system/*.h are real files that forward-include
+          # into include/soc/oplus/boot/ (stubbed symlink dir). Write proper
+          # stubs with enough type definitions to compile against.
 
           BOOT="$KDIR/include/soc/oplus/boot"
           mkdir -p "$BOOT"
@@ -190,7 +187,6 @@ jobs:
           #endif /* __OPLUS_BOOT_MODE_H__ */
           EOF
 
-          # Minimal stub for oplus_project.h
           cat > "$BOOT/oplus_project.h" << 'EOF'
           /* Auto-generated stub: missing OPlus vendor source */
           #ifndef __OPLUS_PROJECT_H__
@@ -201,22 +197,8 @@ jobs:
           #endif /* __OPLUS_PROJECT_H__ */
           EOF
 
-          # Catch-all: any other headers that land in this boot dir
-          for f in "$BOOT"/*.h; do
-            [ -e "$f" ] || true  # glob may not match anything
-          done
-
-          echo "Boot stubs written:"
+          echo "Boot stubs:"
           ls -la "$BOOT/"
-
-          # Also ensure device_info.h forwarding stub exists in include path
-          touch "$KDIR/include/soc/oplus/device_info.h"
-
-          # Stub out dfr/dft dirs which are also dangling symlinks under include/soc/oplus
-          for d in dfr dft; do
-            mkdir -p "$KDIR/include/soc/oplus/$d"
-            touch "$KDIR/include/soc/oplus/$d/oplus_${d}.h" 2>/dev/null || true
-          done
 
       - name: Patch oplus_audio_switch stub with needed declarations
         run: |
