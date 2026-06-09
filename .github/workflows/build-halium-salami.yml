@@ -128,7 +128,7 @@ jobs:
                               oplus_depth = depth
                       elif ifdef_generic.search(s):
                           depth += 1
-                      elif endif_re.search(s):
+                      elif endif_re.search(s):  
                           if oplus_depth is not None and depth == oplus_depth:
                               oplus_depth = None
                           depth = max(depth - 1, 0)
@@ -209,6 +209,36 @@ jobs:
           content = open(check).read()
           assert 'MSM_BOOT_MODE__FACTORY ' in content, 'FACTORY missing from stub!'
           print(f'Verified: MSM_BOOT_MODE__FACTORY present in {check}')
+          PYEOF
+
+      - name: Patch qcom-hv-haptics.c factory mode references
+        run: |
+          python3 << 'PYEOF'
+          import os
+
+          kdir = os.environ['KDIR']
+          hap = os.path.join(kdir, 'drivers/input/misc/qcom-hv-haptics.c')
+
+          content = open(hap, encoding='utf-8').read()
+
+          # Exact literal replacement - replace the specific factory check
+          # MSM_BOOT_MODE__FACTORY (OPlus value=12) -> FACTORY2 (GKI value=4)
+          # The || ensures we only match standalone FACTORY not FACTORY2/FACTORY3
+          before = content.count('MSM_BOOT_MODE__FACTORY ||')
+          content = content.replace(
+              'MSM_BOOT_MODE__FACTORY ||',
+              'MSM_BOOT_MODE__FACTORY2 ||'
+          )
+          after_count = content.count('MSM_BOOT_MODE__FACTORY ||')
+          open(hap, 'w', encoding='utf-8').write(content)
+
+          print(f'qcom-hv-haptics.c: replaced {before} occurrence(s) of FACTORY || with FACTORY2 ||')
+          print(f'Remaining standalone FACTORY || occurrences: {after_count}')
+
+          # Also print the surrounding lines for verification
+          for i, line in enumerate(content.splitlines(), 1):
+              if 'MSM_BOOT_MODE__FACTORY' in line:
+                  print(f'  line {i}: {line.strip()}')
           PYEOF
 
       - name: Patch oplus_audio_switch stub with needed declarations
@@ -312,17 +342,6 @@ jobs:
           export CCACHE_DIR="$HOME/.ccache"
           ccache -M 8G
           cd "$KDIR"
-
-          # Patch qcom-hv-haptics.c: replace MSM_BOOT_MODE__FACTORY (OPlus value=12)
-          # with FACTORY2 (GKI value=4). Word boundary via [^23A-Z_] avoids FACTORY2/3.
-          HAP="drivers/input/misc/qcom-hv-haptics.c"
-          sed -i 's/MSM_BOOT_MODE__FACTORY\b/MSM_BOOT_MODE__FACTORY2/g' "$HAP" 2>/dev/null || true
-          echo "=== haptics FACTORY refs after patch ==="
-          grep -n 'MSM_BOOT_MODE__FACTORY' "$HAP" || echo "(none remaining)"
-          echo "=== boot_mode.h line count ==="
-          wc -l include/soc/oplus/boot/boot_mode.h 2>/dev/null || echo "missing"
-          echo "==="
-
           make O="$OUT" \
             ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
