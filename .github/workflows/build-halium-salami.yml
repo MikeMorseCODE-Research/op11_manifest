@@ -212,6 +212,46 @@ jobs:
           print(f'Verified: MSM_BOOT_MODE__FACTORY present in {check}')
           PYEOF
 
+      - name: Debug and patch qcom-hv-haptics factory mode reference
+        run: |
+          python3 << 'PYEOF'
+          import os, re
+
+          kdir = os.environ['KDIR']
+
+          # Debug: show exactly what boot_mode.h is on disk
+          bm = os.path.join(kdir, 'include/soc/oplus/boot/boot_mode.h')
+          print(f'=== {bm} ===')
+          if os.path.islink(bm):
+              print(f'  IS SYMLINK -> {os.readlink(bm)}')
+          elif os.path.exists(bm):
+              print(open(bm).read())
+          else:
+              print('  FILE MISSING!')
+
+          # Patch qcom-hv-haptics.c: replace MSM_BOOT_MODE__FACTORY (value 12,
+          # OPlus-extended) with FACTORY2 (value 4, GKI). Factory mode is
+          # irrelevant for Droidian so this is safe.
+          hap = os.path.join(kdir, 'drivers/input/misc/qcom-hv-haptics.c')
+          if os.path.exists(hap):
+              content = open(hap).read()
+              # \b matches word boundary: FACTORY followed by non-word char
+              # so FACTORY2 and FACTORY3 are NOT matched
+              patched = re.sub(
+                  r'MSM_BOOT_MODE__FACTORY\b',
+                  'MSM_BOOT_MODE__FACTORY2',
+                  content
+              )
+              if patched != content:
+                  open(hap, 'w').write(patched)
+                  count = len(re.findall(r'MSM_BOOT_MODE__FACTORY\b', content))
+                  print(f'Patched qcom-hv-haptics.c: replaced {count} FACTORY reference(s) with FACTORY2')
+              else:
+                  print('qcom-hv-haptics.c: no standalone FACTORY references found')
+          else:
+              print(f'WARNING: {hap} not found')
+          PYEOF
+
       - name: Patch oplus_audio_switch stub with needed declarations
         run: |
           STUB_CONTENT='/* Auto-generated stub: missing OPlus vendor source */
