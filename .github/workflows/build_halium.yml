@@ -84,14 +84,21 @@ jobs:
             https://github.com/MikeMorseCODE/kernel_oneplus_sm8550 \
             "$KDIR"
 
-      - name: Create OPlus Kconfig stubs
+      - name: Fix dangling OPlus symlinks
         run: |
-          mkdir -p "$KDIR/kernel/oplus_cpu/thermal"
-          cat > "$KDIR/kernel/oplus_cpu/thermal/Kconfig" << 'EOF'
-          config OPLUS_FEATURE_THERMAL_HORAE
-              bool "OPLUS thermal HORAE (stub)"
-              default n
-          EOF
+          cd "$KDIR"
+          # thermal is a symlink to an unchecked-out repo — replace with stub
+          rm -f kernel/oplus_cpu/thermal
+          mkdir -p kernel/oplus_cpu/thermal
+          printf 'config OPLUS_FEATURE_THERMAL_HORAE\n\tbool "OPLUS thermal HORAE (stub)"\n\tdefault n\n' \
+            > kernel/oplus_cpu/thermal/Kconfig
+          # Catch any other dangling symlinks under kernel/oplus_cpu
+          find kernel/oplus_cpu -xtype l | while read link; do
+            echo "Stubbing dangling symlink: $link"
+            rm "$link"
+            mkdir -p "$link"
+            printf '# stub\n' > "$link/Kconfig" 2>/dev/null || true
+          done
 
       - name: Cache ccache
         uses: actions/cache@v4
