@@ -205,51 +205,10 @@ jobs:
                   f.write(oplus_project_h)
               print(f'Written stubs to {d}')
 
-          # Verify FACTORY is present
           check = os.path.join(kdir, 'include/soc/oplus/boot/boot_mode.h')
           content = open(check).read()
           assert 'MSM_BOOT_MODE__FACTORY ' in content, 'FACTORY missing from stub!'
           print(f'Verified: MSM_BOOT_MODE__FACTORY present in {check}')
-          PYEOF
-
-      - name: Debug and patch qcom-hv-haptics factory mode reference
-        run: |
-          python3 << 'PYEOF'
-          import os, re
-
-          kdir = os.environ['KDIR']
-
-          # Debug: show exactly what boot_mode.h is on disk
-          bm = os.path.join(kdir, 'include/soc/oplus/boot/boot_mode.h')
-          print(f'=== {bm} ===')
-          if os.path.islink(bm):
-              print(f'  IS SYMLINK -> {os.readlink(bm)}')
-          elif os.path.exists(bm):
-              print(open(bm).read())
-          else:
-              print('  FILE MISSING!')
-
-          # Patch qcom-hv-haptics.c: replace MSM_BOOT_MODE__FACTORY (value 12,
-          # OPlus-extended) with FACTORY2 (value 4, GKI). Factory mode is
-          # irrelevant for Droidian so this is safe.
-          hap = os.path.join(kdir, 'drivers/input/misc/qcom-hv-haptics.c')
-          if os.path.exists(hap):
-              content = open(hap).read()
-              # \b matches word boundary: FACTORY followed by non-word char
-              # so FACTORY2 and FACTORY3 are NOT matched
-              patched = re.sub(
-                  r'MSM_BOOT_MODE__FACTORY\b',
-                  'MSM_BOOT_MODE__FACTORY2',
-                  content
-              )
-              if patched != content:
-                  open(hap, 'w').write(patched)
-                  count = len(re.findall(r'MSM_BOOT_MODE__FACTORY\b', content))
-                  print(f'Patched qcom-hv-haptics.c: replaced {count} FACTORY reference(s) with FACTORY2')
-              else:
-                  print('qcom-hv-haptics.c: no standalone FACTORY references found')
-          else:
-              print(f'WARNING: {hap} not found')
           PYEOF
 
       - name: Patch oplus_audio_switch stub with needed declarations
@@ -353,6 +312,17 @@ jobs:
           export CCACHE_DIR="$HOME/.ccache"
           ccache -M 8G
           cd "$KDIR"
+
+          # Patch qcom-hv-haptics.c: replace MSM_BOOT_MODE__FACTORY (OPlus value=12)
+          # with FACTORY2 (GKI value=4). Word boundary via [^23A-Z_] avoids FACTORY2/3.
+          HAP="drivers/input/misc/qcom-hv-haptics.c"
+          sed -i 's/MSM_BOOT_MODE__FACTORY\b/MSM_BOOT_MODE__FACTORY2/g' "$HAP" 2>/dev/null || true
+          echo "=== haptics FACTORY refs after patch ==="
+          grep -n 'MSM_BOOT_MODE__FACTORY' "$HAP" || echo "(none remaining)"
+          echo "=== boot_mode.h line count ==="
+          wc -l include/soc/oplus/boot/boot_mode.h 2>/dev/null || echo "missing"
+          echo "==="
+
           make O="$OUT" \
             ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
