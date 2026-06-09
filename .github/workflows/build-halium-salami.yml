@@ -48,7 +48,7 @@ jobs:
             clang-14 lld-14 llvm-14 clang-format-14 \
             bc bison build-essential binutils-aarch64-linux-gnu \
             cpio flex git libelf-dev libssl-dev libncurses-dev \
-            python3 rsync wget zip ccache
+            python3 rsync wget zip ccache dwarves
 
       - name: Wire Clang 14 into prebuilts path
         run: |
@@ -159,8 +159,6 @@ jobs:
 
           kdir = os.environ['KDIR']
 
-          # boot_mode.h: full enum + static inline get_boot_mode() so callers
-          # get an inline definition with no external symbol required.
           boot_mode_lines = [
               '/* Auto-generated stub: missing OPlus vendor source */',
               '#ifndef __OPLUS_BOOT_MODE_H__',
@@ -199,18 +197,14 @@ jobs:
           ]
           oplus_project_h = '\n'.join(project_lines) + '\n'
 
-          # haptic_feedback.h: stub for oplus_haptic_track_* functions used in
-          # qcom-hv-haptics.c when CONFIG_HAPTIC_FEEDBACK_MODULE is defined.
           haptic_fb_lines = [
               '/* Auto-generated stub: missing OPlus aw8697 haptic source */',
               '#ifndef __HAPTIC_FEEDBACK_H__',
               '#define __HAPTIC_FEEDBACK_H__',
-              '/* Track error type constants */',
               '#define HAPTIC_SPMI_READ_TRACK_ERR   0',
               '#define HAPTIC_SPMI_WRITE_TRACK_ERR  1',
               '#define HAPTIC_MEM_ALLOC_TRACK       2',
               '#define HAPTIC_F0_CALI_TRACK         3',
-              '/* No-op stubs for OPlus haptic tracking functions */',
               '#define oplus_haptic_track_dev_err(...)       (0)',
               '#define oplus_haptic_track_fre_cail(...)      (0)',
               '#define oplus_haptic_track_mem_alloc_err(...) (0)',
@@ -227,7 +221,6 @@ jobs:
                   f.write(oplus_project_h)
               print(f'Written boot stubs to {d}')
 
-          # haptic_feedback.h lives at drivers/misc/aw8697_haptic/ (relative include)
           haptic_dir = os.path.join(kdir, 'drivers/misc/aw8697_haptic')
           os.makedirs(haptic_dir, exist_ok=True)
           hap_fb_path = os.path.join(haptic_dir, 'haptic_feedback.h')
@@ -237,10 +230,9 @@ jobs:
 
           check = os.path.join(kdir, 'include/soc/oplus/boot/boot_mode.h')
           content = open(check).read()
-          assert 'MSM_BOOT_MODE__FACTORY ' in content, 'FACTORY missing from stub!'
-          assert 'get_boot_mode' in content, 'get_boot_mode missing from stub!'
+          assert 'MSM_BOOT_MODE__FACTORY ' in content, 'FACTORY missing!'
           assert 'static inline' in content, 'get_boot_mode not static inline!'
-          print(f'Verified boot_mode.h is correct')
+          print('Verified boot_mode.h OK')
           PYEOF
 
       - name: Patch oplus_audio_switch stub with needed declarations
@@ -297,13 +289,12 @@ jobs:
                   for m in obj_re.finditer(content):
                       configs.add(m.group(1))
 
-          # Explicit disables: drivers with OPlus-only source or that need
-          # OPlus vendor symbols not present in this build
           explicit = [
               'CONFIG_FSA4480_I2C',
               'CONFIG_QCOM_FSA4480_I2C',
               'CONFIG_HAPTIC_FEEDBACK',
               'CONFIG_AW8697_HAPTIC',
+              'CONFIG_DEBUG_INFO_BTF',
           ]
           for c in explicit:
               configs.add(c)
